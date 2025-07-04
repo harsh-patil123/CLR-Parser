@@ -184,15 +184,28 @@ def parse_table_file(filename="table.txt"):
             i += 1
     return table
 
-def parse_string(input_string, parsing_table, productions):
-    input_string += '$'
-    stack = [0]
-    pointer = 0
 
+def parse_string(input_string, parsing_table, productions):
+    """Parse the input string and print the LR parsing trace.
+
+    The trace now starts with an **empty stack** (only the initial state 0)
+    and the **full untouched input**. This gives a clearer, textbook-style
+    view of how the parser proceeds step‑by‑step.
+    """
+
+    input_string += '$'
+    stack = [0]          # LR parsing stack – starts with state 0 only
+    pointer = 0          # Points to the current symbol in the input
+
+    # ── Pretty‑print table header ──────────────────────────────────────────
     print(f"\nParsing input: {input_string}")
-    print(f"{'Stack':<20} {'Input':<20} {'Action'}")
+    print(f"{'Stack':<30} {'Input':<20} Action")
     print('-'*60)
 
+    # 🔹 INITIAL configuration (empty stack / full input)
+    print(f"{str(stack):<30} {input_string[pointer:]:<20}  ––– start–––")
+
+    # ── Main LR parsing loop ──────────────────────────────────────────────
     while True:
         state = stack[-1]
         current_symbol = input_string[pointer]
@@ -200,46 +213,57 @@ def parse_string(input_string, parsing_table, productions):
         action = parsing_table.get(state, {}).get(current_symbol)
 
         if action is None:
-            print(f"{str(stack):<20} {input_string[pointer:]:<20} ERROR: Unexpected symbol '{current_symbol}'")
+            print(f"{str(stack):<30} {input_string[pointer:]:<20} ERROR: Unexpected symbol '{current_symbol}'")
             return False
 
+        # If multiple actions are stored as a set, pick the (only) element
         action = list(action)[0] if isinstance(action, set) else action
 
+        # ── SHIFT ─────────────────────────────────────────────────────────
         if action.startswith('s'):
             next_state = int(action[1:])
             stack.append(current_symbol)
             stack.append(next_state)
             pointer += 1
-            print(f"{str(stack):<20} {input_string[pointer:]:<20} Shift and go to state {next_state}")
+            print(f"{str(stack):<30} {input_string[pointer:]:<20} Shift and go to state {next_state}")
 
+        # ── REDUCE ────────────────────────────────────────────────────────
         elif action.startswith('r'):
             prod_index = int(action[1:])
             prod = productions[prod_index]
             lhs, rhs = prod.split('->')
-            rhs_len = len(rhs) * 2
-            if rhs:
-                stack = stack[:-rhs_len]
+
+            # Pop |rhs|*2 items (symbol & state alternately) – but only if rhs≠ε
+            if rhs != '':
+                pop_len = len(rhs) * 2
+                stack = stack[:-pop_len]
+
+            # GOTO after reduction
             top_state = stack[-1]
             stack.append(lhs)
-            goto = parsing_table.get(top_state, {}).get(lhs)
-            if goto is None:
-                print(f"{str(stack):<20} {input_string[pointer:]:<20} ERROR: No GOTO for {lhs}")
+            goto_action = parsing_table.get(top_state, {}).get(lhs)
+            if goto_action is None:
+                print(f"{str(stack):<30} {input_string[pointer:]:<20} ERROR: No GOTO for {lhs}")
                 return False
-            next_state = int(goto) if isinstance(goto, str) else int(list(goto)[0])
+            next_state = int(goto_action) if isinstance(goto_action, str) else int(list(goto_action)[0])
             stack.append(next_state)
-            print(f"{str(stack):<20} {input_string[pointer:]:<20} Reduce using {prod}, GOTO {next_state}")
+            print(f"{str(stack):<30} {input_string[pointer:]:<20} Reduce using {prod}, GOTO {next_state}")
 
+        # ── ACCEPT ────────────────────────────────────────────────────────
         elif action == 'ac':
-            print(f"{str(stack):<20} {input_string[pointer:]:<20} ACCEPT")
+            print(f"{str(stack):<30} {input_string[pointer:]:<20} ACCEPT")
             return True
 
+        # ── UNKNOWN / INVALID ACTION ─────────────────────────────────────
         else:
-            print(f"{str(stack):<20} {input_string[pointer:]:<20} ERROR: Invalid action {action}")
+            print(f"{str(stack):<30} {input_string[pointer:]:<20} ERROR: Invalid action {action}")
             return False
+
 
 def main():
     global production_list, ntl, nt_list, tl, t_list
 
+    # Collect grammar and compute FIRST/FOLLOW
     firstfollow.main()
 
     print("\tFIRST AND FOLLOW OF NON-TERMINALS")
@@ -254,54 +278,40 @@ def main():
     nt_list = list(ntl.keys())
     t_list = list(tl.keys()) + ['$']
 
-    j = calc_states()
+    # Build CLR(1) item sets & table
+    states = calc_states()
 
-    output = open('items.txt', 'w')
-    ctr = 0
-    for s in j:
-        print("Item{}:".format(ctr))
-        output.write(str(ctr) + '\n')
-        for i in s:
-            print("\t", i)
-            output.write(i + '\n')
-        ctr += 1
-    output.close()
+    # Dump items
+    with open('items.txt', 'w') as output:
+        for idx, s in enumerate(states):
+            output.write(str(idx) + '\n')
+            for itm in s:
+                output.write(itm + '\n')
 
-    table = make_table(j)
+    table = make_table(states)
 
-    output = open("table.txt", "w")
-    for i in table:
-        output.write(str(i) + '\n')
-        for j in table[i]:
-            output.write(str(j) + " ")
-            for k in table[i][j]:
-                output.write(str(k))
-            output.write('\n')
-    output.close()
+    # Dump table for later use / inspection
+    with open("table.txt", "w") as output:
+        for i in table:
+            output.write(str(i) + '\n')
+            for j in table[i]:
+                output.write(str(j) + " ")
+                for k in table[i][j]:
+                    output.write(str(k))
+                output.write('\n')
 
+    # Pretty‑print table summary
     print('_______________________________________________________________________________________')
     print("\n\tCLR(1) TABLE\n")
     sym_list = nt_list + t_list
-    sr, rr = 0, 0
     print('_______________________________________________________________________________________')
     print('\t|  ', '\t|  '.join(sym_list), '\t\t|')
     print('_______________________________________________________________________________________')
-    for i, j in table.items():
-        print(i, "\t|  ", '\t|  '.join(list(j.get(sym, ' ') if type(j.get(sym)) in (str, None) else next(iter(j.get(sym, ' '))) for sym in sym_list)), '\t\t|')
-        s, r = 0, 0
-        for p in j.values():
-            if p != 'accept' and len(p) > 1:
-                p = list(p)
-                if 'r' in p[0]: r += 1
-                else: s += 1
-                if 'r' in p[1]: r += 1
-                else: s += 1
-        if r > 0 and s > 0: sr += 1
-        elif r > 0: rr += 1
-    print('_______________________________________________________________________________________')
-    print("\n", sr, "s/r conflicts |", rr, "r/r conflicts")
+    for i, row in table.items():
+        print(i, "\t|  ", '\t|  '.join(list(row.get(sym, ' ') if isinstance(row.get(sym), str) or row.get(sym) is None else next(iter(row.get(sym, ' '))) for sym in sym_list)), '\t\t|')
     print('_______________________________________________________________________________________')
 
+    # Interactive parse loop
     table_dict = parse_table_file("table.txt")
     while True:
         test_input = input("\nEnter a string to parse (or type 'exit' to quit): ").strip()
@@ -309,6 +319,7 @@ def main():
             break
         result = parse_string(test_input, table_dict, production_list)
         print("Result:", "Accepted" if result else "Rejected")
+
 
 if __name__ == "__main__":
     main()
